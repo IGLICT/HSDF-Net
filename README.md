@@ -61,6 +61,8 @@ but replacing `configs/example.txt` in the commands with the desired configurati
     Download pretrained models from [this link](https://mailsucaseducn-my.sharepoint.com/:u:/g/personal/yangjie161_mails_ucas_edu_cn/EQrAPnOXqulNo89Yab0Rhk4BE4kkl8QCkJSSL5DiVixzrQ?e=nv0ftz).
     Run 'python generate.py --config ./configs/example1.txt'
 
+If you prefer Jittor version, please switch to [this](https://github.com/IGLICT/HSDF-Net/tree/main).
+
 ## Citation
 
 If you find our work useful in your research, please consider citing:
