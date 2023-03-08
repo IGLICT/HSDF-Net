@@ -1,8 +1,7 @@
-#import torch
-import jittor
+import torch
 import random
 import numpy as np
-from jittor import optim
+from torch import optim
 
 
 def get_opt(params, cfgopt, overwrite_lr=None):
@@ -15,7 +14,7 @@ def get_opt(params, cfgopt, overwrite_lr=None):
                                betas=(cfgopt.beta1, cfgopt.beta2),
                                weight_decay=float(cfgopt.weight_decay))
     elif cfgopt.type == 'sgd':
-        optimizer = jittor.optim.SGD(params, lr=lr, momentum=cfgopt.momentum)
+        optimizer = torch.optim.SGD(params, lr=lr, momentum=cfgopt.momentum)
     else:
         assert 0, "Optimizer type should be either 'adam' or 'sgd'"
 
@@ -67,6 +66,6 @@ def set_random_seed(seed):
     """set random seed"""
     random.seed(seed)
     np.random.seed(seed)
-    jittor.manual_seed(seed)
-    jittor.cuda.manual_seed(seed)
-    jittor.cuda.manual_seed_all(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)

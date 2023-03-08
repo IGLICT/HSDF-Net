@@ -1,11 +1,9 @@
 import os
-#import torch
-import jittor
+import torch
 import importlib
 import os.path as osp
 from argparse import Namespace
-#import torch.nn.functional as F
-import jittor.nn as F
+import torch.nn.functional as F
 from trainers.base_trainer import BaseTrainer
 from trainers.utils.utils import set_random_seed
 from trainers.utils.igp_utils import sample_points
@@ -49,10 +47,10 @@ def deform_step(
         constr = F.relu(constr - loss_h_thr)
     if use_l1_loss:
         loss_h = F.l1_loss(
-            constr, jittor.zeros_like(constr)) * loss_h_weight
+            constr, torch.zeros_like(constr)) * loss_h_weight
     else:
         loss_h = F.mse_loss(
-            constr, jittor.zeros_like(constr)) * loss_h_weight
+            constr, torch.zeros_like(constr)) * loss_h_weight
 
     if sample_cfg is not None and x is None:
         x, weights = sample_points(
@@ -67,7 +65,7 @@ def deform_step(
     if loss_g_weight > 0.:
         loss_g = loss_eikonal(net, npoints=n_g_pts, dim=dim, x=x) * loss_g_weight
     else:
-        loss_g = jittor.zeros(1).cuda().float()
+        loss_g = torch.zeros(1).cuda().float()
 
     if loss_hess_weight > 0.:
         loss_hess = bending_loss(
@@ -81,7 +79,7 @@ def deform_step(
         )
         loss_hess *= loss_hess_weight
     else:
-        loss_hess = jittor.zeros(1).cuda().float()
+        loss_hess = torch.zeros(1).cuda().float()
 
     if loss_stretch_weight > 0.:
         loss_stretch = stretch_loss(
@@ -96,12 +94,12 @@ def deform_step(
         )
         loss_stretch *= loss_stretch_weight
     else:
-        loss_stretch = jittor.zeros(1).cuda().float()
+        loss_stretch = torch.zeros(1).cuda().float()
 
     loss = loss_h + loss_g + loss_hess + loss_stretch
-    opt.backward(loss)
+    loss.backward()
     if grad_clip is not None:
-        opt.clip_grad_norm(net.deform.parameters(), grad_clip)
+        torch.nn.utils.clip_grad_norm_(net.deform.parameters(), grad_clip)
 
     opt.step()
 
@@ -114,7 +112,7 @@ def deform_step(
         'loss_hess': loss_hess.detach().cpu().item(),
         'loss_stretch': loss_stretch.detach().cpu().item()
     }
-    
+
 
 class Trainer(BaseTrainer):
 
@@ -131,7 +129,7 @@ class Trainer(BaseTrainer):
             self.original_net = sn_lib.Net(cfg, cfg.models.decoder)
             self.original_net.cuda()
             self.original_net.load_state_dict(
-                jittor.load(cfg.models.decoder.path)['net'])
+                torch.load(cfg.models.decoder.path)['net'])
             print("Original Decoder:")
             print(self.original_net)
         else:
@@ -295,11 +293,11 @@ class Trainer(BaseTrainer):
         if appendix is not None:
             d.update(appendix)
         save_name = "epoch_%s_iters_%s.pt" % (epoch, step)
-        jittor.save(d, osp.join(self.cfg.save_dir, "checkpoints", save_name))
-        jittor.save(d, osp.join(self.cfg.save_dir, "latest.pt"))
+        torch.save(d, osp.join(self.cfg.save_dir, "checkpoints", save_name))
+        torch.save(d, osp.join(self.cfg.save_dir, "latest.pt"))
 
     def resume(self, path, strict=True, **kwargs):
-        ckpt = jittor.load(path)
+        ckpt = torch.load(path)
         self.original_net.load_state_dict(ckpt['dec'], strict=strict)
         self.net.load_state_dict(ckpt['next_dec'], strict=strict)
         self.opt.load_state_dict(ckpt['net_opt_dec'])

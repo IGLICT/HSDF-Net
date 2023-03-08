@@ -1,7 +1,5 @@
-#import torch
-#import torch.nn.functional as F
-import jittor
-import jittor.nn as F
+import torch
+import torch.nn.functional as F
 from trainers.utils.diff_ops import gradient
 from trainers.utils.igp_utils import sample_points
 
@@ -29,8 +27,8 @@ def loss_eikonal(
     x.requires_grad = True
     y = net(x.view(1, -1, dim))
     grad_norm = gradient(y, x).view(-1, dim).norm(dim=-1)
-    loss_all = jittor.nn.mse_loss(
-        grad_norm, jittor.ones_like(grad_norm), reduction='none')
+    loss_all = torch.nn.functional.mse_loss(
+        grad_norm, torch.ones_like(grad_norm), reduction='none')
     loss_all = loss_all * weights
 
     if reduction == 'none':
@@ -58,8 +56,8 @@ def loss_eikonal_dsdf(
     #x.requires_grad = True
     #y = net(x.view(1, -1, dim))
     grad_norm = gradient(y, x).view(-1, dim).norm(dim=-1)
-    loss_all = jittor.nn.mse_loss(
-        grad_norm, jittor.ones_like(grad_norm), reduction='none')
+    loss_all = torch.nn.functional.mse_loss(
+        grad_norm, torch.ones_like(grad_norm), reduction='none')
     loss_all = loss_all * weights
 
     if reduction == 'none':

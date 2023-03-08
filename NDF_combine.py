@@ -82,6 +82,8 @@ def loadNDF(index, pointcloud_samples, exp_name, data_dir, split_file, sample_di
 
     generator = generation.Generator(net, exp_name, device=device)
 
+    #print('index: {}'.format(index))
+
     example = dataset[index]
 
     print('Object: ',example['path'])
@@ -110,6 +112,7 @@ def predictRotNDF(points):
         point = point.detach()
         point.requires_grad = True
 
+        # 0 stands for udf, 1 stands for sdf
         dist = net.decoder(point,*encoding)[0]
         dist = torch.clamp(dist, max=0.1)
         #logits = p_r.logits
@@ -169,7 +172,8 @@ def predictRotGradientNDF(points):
         point = point.detach()
         point.requires_grad = True
 
-        df_pred = torch.clamp(net.decoder(point,*encoding)[0], max=0.1)
+        # 0 stands for udf, 1 stands for sdf
+        df_pred = torch.clamp(net.decoder(point,*encoding)[1], max=0.1, min=-0.1)
         #p_r_logits = torch.clamp(net.decoder(points,*encoding)[1].logits, max=cls_logits_threshold+0.5, min=cls_logits_threshold-0.5)
         #p_r_logits = net.decoder(point,*encoding)[1].logits
 

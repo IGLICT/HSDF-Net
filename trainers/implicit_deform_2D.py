@@ -1,5 +1,4 @@
-#import torch
-import jittor
+import torch
 import numpy as np
 from trainers.utils.vis_utils import imf2img, make_2d_grid
 from trainers.utils.igp_losses import get_surf_pcl
@@ -43,7 +42,7 @@ class Trainer(BaseTrainer):
         qres = getattr(self.vis_cfg, "qres", 15)
         orig_loc = make_2d_grid(qres).view(qres * qres, 2).detach().numpy()
         dfm= self.net(
-            jittor.Var(orig_loc).cuda().view(1, -1, 2).float(),
+            torch.from_numpy(orig_loc).cuda().view(1, -1, 2).float(),
             None, return_delta=True
         )[0].detach().cpu().numpy().reshape(qres * qres, 2)
 
@@ -130,7 +129,7 @@ class Trainer(BaseTrainer):
             npoints=n_pts_smp, dim=2).view(-1, 2)
         if hasattr(self.net, "deform") and x_orig.size(0) > 0 and \
                 hasattr(self.net.deform, "invert"):
-            with jittor.no_grad():
+            with torch.no_grad():
                 x_invert = self.net.deform.invert(
                     x_orig.view(1, -1, 2), iters=30)
                 x_invert = x_invert.detach().cpu().numpy().reshape(-1, 2)

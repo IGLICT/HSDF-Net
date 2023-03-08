@@ -1,28 +1,27 @@
 from posixpath import dirname
+from warnings import formatwarning
 import numpy as np
 import sys 
 import os 
 from subprocess import call
 import shutil
-#from torch.import typename
+from torch import typename
 import multiprocessing as mp
 from multiprocessing import Pool
 from functools import partial
-#import torch
-import jittor
+import torch
 
-#from torch.nn.parallel.data_parallel import DataParallel
+from torch.nn.parallel.data_parallel import DataParallel
 import configs.config_loader as cfg_loader
 from glob import glob
 
-#import torch.distributed as dist
+import torch.distributed as dist
 import pymeshlab as ml
 import trimesh
-from scipy.spatial import cKDTree as KDTree
 import time
 
-#from mesh_to_sdf import sample_sdf_near_surface, mesh_to_voxels, mesh_to_sdf
-#from mesh_to_sdf.utils import get_raster_points
+from mesh_to_sdf import sample_sdf_near_surface, mesh_to_voxels, mesh_to_sdf
+from mesh_to_sdf.utils import get_raster_points
 from numpy.core.einsumfunc import einsum_path
 from numpy.lib.twodim_base import mask_indices
 
@@ -32,10 +31,8 @@ import numpy as np
 from trimesh import points
 #import igl
 from skimage.measure import marching_cubes
-#import torch
+import torch
 import os
-#import igl
-
 # this is mostly from https://github.com/chrischoy/3D-R2N2/blob/master/lib/voxel.py 
 # though I sped up the voxel2mesh function considerably, now only surface voxels are saved
 # this is only really important for very large models 
@@ -47,6 +44,14 @@ MGN_TYPE = [
     'ShirtNoCoat',
     'TShirtNoCoat']
 
+def as_mesh(scene_or_mesh):
+    if isinstance(scene_or_mesh, trimesh.Scene):
+        mesh = trimesh.util.concatenate([
+            trimesh.Trimesh(vertices=m.vertices, faces=m.faces)
+            for m in scene_or_mesh.geometry.values()])
+    else:
+        mesh = scene_or_mesh
+    return mesh
 
 def voxel2mesh(voxels, threshold=.3):
     cube_verts = [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1], [1, 0, 0], [1, 0, 1], [1, 1, 0],
@@ -150,23 +155,23 @@ def fix_npz_mp(file_path):
     except:
         print('bad file: {}'.format(file_path))
         os.remove(file_path)
-'''
+
 def reduce_tensor(tensor):
     rt = tensor.clone()
     dist.all_reduce(rt, op=dist.ReduceOp.SUM)
     rt /= dist.get_world_size()
     return rt
-'''
+
 def optimizer_to(optim, device):
     for param in optim.state.values():
         # Not sure there are any global tensors in the state dict
-        if isinstance(param, jittor.Var):
+        if isinstance(param, torch.Tensor):
             param.data = param.data.to(device)
             if param._grad is not None:
                 param._grad.data = param._grad.data.to(device)
         elif isinstance(param, dict):
             for subparam in param.values():
-                if isinstance(subparam, jittor.Var):
+                if isinstance(subparam, torch.Tensor):
                     subparam.data = subparam.data.to(device)
                     if subparam._grad is not None:
                         subparam._grad.data = subparam._grad.data.to(device)
@@ -249,16 +254,61 @@ def preprocess_watertight(data_dir, src_dir):
 
         print('duration {}'.format(duration))
 
-def create_grid_points_from_bounds(minimun, maximum, res):
-    x = np.linspace(minimun, maximum, res)
-    X, Y, Z = np.meshgrid(x, x, x, indexing='ij')
-    X = X.reshape((np.prod(X.shape),))
-    Y = Y.reshape((np.prod(Y.shape),))
-    Z = Z.reshape((np.prod(Z.shape),))
+def pc2mesh_perobj(obj_path):
+    target_path = os.path.join(os.path.dirname(obj_path), 'dense_point_cloud_7_bpa.obj')
+    if os.path.exists(target_path):
+        print('{} exists, skip!'.format(obj_path))
+        return
 
-    points_list = np.column_stack((X, Y, Z))
-    del X, Y, Z, x
-    return points_list
+    print('processing {}'.format(obj_path))
+    #path = os.path.join(data_dir, name, 'dense_point_cloud_7_pc.off')
+
+    ms = ml.MeshSet()
+    ms.load_new_mesh(obj_path)
+    ms.load_filter_script('ndf_postprocess.mlx')
+    ms.apply_filter_script()
+    ms.save_current_mesh()
+
+def softplusplus(input_, alpha=0.2):
+    return torch.log(1.0+torch.exp(input_*(1.0-alpha)))+alpha*input_-torch.log(torch.tensor(2.0))
+
+class SoftPlusPlus(torch.nn.Module):
+    def __init__(self, alpha=0.2) -> None:
+        super().__init__()
+        self.alpha = alpha
+
+    def forward(self, input_):
+        #print('input: {}'.format(input_))
+        return softplusplus(input_, self.alpha)
+
+def sine_init(m):
+    with torch.no_grad():
+        if hasattr(m, 'weight'):
+            num_input = m.weight.size(-1)
+            # See supplement Sec. 1.5 for discussion of factor 30
+            m.weight.uniform_(
+                -np.sqrt(6 / num_input) / 30, np.sqrt(6 / num_input) / 30)
+
+
+def first_layer_sine_init(m):
+    with torch.no_grad():
+        if hasattr(m, 'weight'):
+            num_input = m.weight.size(-1)
+            # See paper sec. 3.2, final paragraph, and supplement
+            # Sec. 1.5 for discussion of factor 30
+            m.weight.uniform_(-1 / num_input, 1 / num_input)
+
+
+class Sine(torch.nn.Module):
+    def __init__(self, const=30.):
+        super().__init__()
+        self.const = const
+
+    def forward(self, input):
+        # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
+        return torch.sin(self.const * input)
+
+
 
 if __name__=='__main__':
     #modify_npz('datasets/shapenet_improved/data/split_shapenet_cars_chen_old.npz')
@@ -266,25 +316,12 @@ if __name__=='__main__':
     #preprocess_mgn('datasets/MGN/data/0')
     #preprocess_mixamo('datasets/mixamo_data/data/0')
 
-    preprocess_watertight('experiments/shapenet_lamp_chen_apex_148_3000/evaluation/generation/03636649', 'datasets/shapenet_improved/data/03636649')
-    #pc2mesh('experiments/shapenet_chairs_chen_apex_148_3000/evaluation/generation/03001627')
-
-    '''
-    grid_points = create_grid_points_from_bounds(-0.5, 0.5, 64)
-    kdtree = KDTree(grid_points)
-
-    mesh = trimesh.load('datasets/shapenet_improved/data/03001627/113016635d554d5171fb733891076ecf/model_scaled.off')
-    point_cloud = mesh.sample(3000)
-
-    occupancies = np.zeros(len(grid_points), dtype=np.int8)
-
-    _, idx = kdtree.query(point_cloud)
-    occupancies[idx] = 1
-
-    #npz_file = np.load('datasets/shapenet_improved/data/03001627/113016635d554d5171fb733891076ecf/voxelized_point_cloud_256res_3000points.npz')
-    #occupancies = np.unpackbits(npz_file['compressed_occupancies'])
-    voxel2obj('chair.obj', np.reshape(occupancies, (64,)*3))
-    '''
+    #pc2mesh('experiments/shapenet_ships_chen_apex_148_3000/evaluation/generation/04530566')
+    #pc2mesh('experiments/MGN_occ/evaluation_test_cd_100kp/generation/0')
+    #pc2mesh('experiments/shapenet_cars_chen_apex_148/evaluation/generation/02958343')
+    #pc2mesh('experiments/shapenet_cars_chen_closed_300/evaluation/generation/02958343')
+    #preprocess_watertight('experiments/MGN_occ_3000/evaluation/generation/0', 'datasets/MGN/data/0')
+    preprocess_watertight('experiments/shapenet_cars_chen_apex_148/evaluation/generation/02958343', 'datasets/shapenet_improved/data/02958343')
 
     '''
     cfg = cfg_loader.get_config()
@@ -311,4 +348,29 @@ if __name__=='__main__':
         p.join()
 
     multiprocess(fix_npz_mp)
+    '''
+    '''
+    cfg = cfg_loader.get_config()
+
+    paths = glob( 'experiments/shapenet_cars_chen_closed_3000/evaluation/generation/02958343' 
+                    + '/*/dense_point_cloud_7_pc.off')
+    print(len(paths))
+
+    chunks = np.array_split(paths,cfg.num_chunks)
+    paths = chunks[cfg.current_chunk]
+
+
+    if cfg.num_cpus == -1:
+        num_cpus = mp.cpu_count()
+        print('cpu count: {}'.format(num_cpus))
+    else:
+        num_cpus = cfg.num_cpus
+
+    def multiprocess(func):
+        p = Pool(num_cpus)
+        p.map(func, paths)
+        p.close()
+        p.join()
+
+    multiprocess(pc2mesh_perobj)
     '''

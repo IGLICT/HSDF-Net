@@ -1,7 +1,5 @@
-#import torch
-#import torch.nn.functional as F
-import jittor
-import jittor.nn as F
+import torch
+import torch.nn.functional as F
 from trainers.utils.diff_ops import hessian, jacobian
 from trainers.utils.igp_utils import sample_points, tangential_projection_matrix
 
@@ -57,9 +55,9 @@ def bending_loss(
     h_inp = h_inp.view(bs * npoints, dim, dim)
 
     # Compute the projected hessians and their differences after adjustment
-    h_inp_J = jittor.bmm(J.transpose(1, 2).contiguous(), jittor.bmm(h_inp, J))
-    diff = jittor.bmm(
-        P.transpose(1, 2).contiguous(), jittor.bmm(h_out - h_inp_J, P))
+    h_inp_J = torch.bmm(J.transpose(1, 2).contiguous(), torch.bmm(h_inp, J))
+    diff = torch.bmm(
+        P.transpose(1, 2).contiguous(), torch.bmm(h_out - h_inp_J, P))
 
     # Compute the Forbinius norm (weighted)
     F_norm = diff.view(bs * npoints, -1).norm(dim=-1, keepdim=False)
@@ -68,10 +66,10 @@ def bending_loss(
 
     if loss_type == 'l2':
         loss = F.mse_loss(
-            F_norm, jittor.zeros_like(F_norm), reduction=reduction)
+            F_norm, torch.zeros_like(F_norm), reduction=reduction)
     elif loss_type == 'l1':
         loss = F.l1_loss(
-            F_norm, jittor.zeros_like(F_norm), reduction=reduction)
+            F_norm, torch.zeros_like(F_norm), reduction=reduction)
     else:
         raise ValueError
     return loss
@@ -113,9 +111,9 @@ def stretch_loss(
     J = J.view(bs * npoints, dim, dim)
 
     # Compute the matrix of interests
-    I = jittor.eye(dim).view(1, dim, dim).to(J)
-    diff = I - jittor.bmm(J.transpose(1, 2), J)
-    diff = jittor.bmm(P.transpose(1, 2), jittor.bmm(diff, P))
+    I = torch.eye(dim).view(1, dim, dim).to(J)
+    diff = I - torch.bmm(J.transpose(1, 2), J)
+    diff = torch.bmm(P.transpose(1, 2), torch.bmm(diff, P))
 
     # Compute the Forbinius norm (weighted)
     F_norm = diff.view(bs * npoints, -1).norm(dim=-1, keepdim=False)
@@ -124,10 +122,10 @@ def stretch_loss(
 
     if loss_type == 'l2':
         loss = F.mse_loss(
-            F_norm, jittor.zeros_like(F_norm), reduction=reduction)
+            F_norm, torch.zeros_like(F_norm), reduction=reduction)
     elif loss_type == 'l1':
         loss = F.l1_loss(
-            F_norm, jittor.zeros_like(F_norm), reduction=reduction)
+            F_norm, torch.zeros_like(F_norm), reduction=reduction)
     else:
         raise ValueError
     return loss

@@ -1,7 +1,7 @@
 import models.local_model as model
 import models.data.voxelized_data_shapenet as voxelized_data
 from models.generation import Generator
-import jittor
+import torch
 import configs.config_loader as cfg_loader
 import os
 import trimesh
@@ -9,12 +9,10 @@ import numpy as np
 from tqdm import tqdm
 from utils import voxel2obj
 
-jittor.flags.use_cuda=1
-
 cfg = cfg_loader.get_config()
 
-#device = torch.device("cuda")
-net = model.HSDF()
+device = torch.device("cuda")
+net = model.NDF()
 
 dataset = voxelized_data.VoxelizedDataset('test',
                                           res=cfg.input_res,
@@ -27,7 +25,7 @@ dataset = voxelized_data.VoxelizedDataset('test',
                                           sample_distribution=cfg.sample_ratio,
                                           sample_sigmas=cfg.sample_std_dev)
 
-gen = Generator(net, cfg.exp_name, cls_threshold=cfg.threshold)
+gen = Generator(net, cfg.exp_name, device=device, cls_threshold=cfg.threshold)
 
 out_path = 'experiments/{}/evaluation_0.02_128/'.format(cfg.exp_name)
 
@@ -41,9 +39,9 @@ def gen_iterator(out_path, dataset, gen_p):
     print(out_path)
 
     # can be run on multiple machines: dataset is shuffled and already generated objects are skipped.
-    #loader = dataset.get_loader(shuffle=True)
+    loader = dataset.get_loader(shuffle=True)
 
-    for i, data in tqdm(enumerate(dataset)):
+    for i, data in tqdm(enumerate(loader)):
 
         path = os.path.normpath(data['path'][0])
 
@@ -72,8 +70,7 @@ def gen_iterator(out_path, dataset, gen_p):
 
         for num_steps in [7]:
             
-            #debug
-            verts, faces, verts_nomask, faces_nomask, duration, voxel, verts_udf, faces_udf, voxel_gradnorm = gen.generate_mesh(data, voxel_resolution=128, chunk_num=16)
+            verts, faces, verts_nomask, faces_nomask, duration, voxel, verts_udf, faces_udf, voxel_gradnorm = gen.generate_mesh(data, voxel_resolution=512, chunk_num=1024)
             #verts, faces, verts_nomask, faces_nomask, duration, voxel, verts_udf, faces_udf, voxel_gradnorm = gen.generate_mesh(data, voxel_resolution=512, chunk_num=4096)
             #np.savez(export_path + 'dense_point_cloud_{}'.format(num_steps), point_cloud=verts, duration=duration)
             #np.savez(export_path + 'dense_point_cloud_{}_nomask'.format(num_steps), point_cloud=verts_nomask, duration=duration)

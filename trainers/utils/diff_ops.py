@@ -1,7 +1,6 @@
 # Based on https://github.com/vsitzmann/siren/blob/master/diff_operators.py
-#import torch
-#from torch.autograd import grad
-import jittor
+import torch
+from torch.autograd import grad
 
 
 def hessian(y, x):
@@ -13,8 +12,8 @@ def hessian(y, x):
         shape (meta_batch_size, num_observations, dim, channels)
     """
     meta_batch_size, num_observations = y.shape[:2]
-    grad_y = jittor.ones_like(y[..., 0]).to(y.device)
-    h = jittor.zeros(meta_batch_size, num_observations,
+    grad_y = torch.ones_like(y[..., 0]).to(y.device)
+    h = torch.zeros(meta_batch_size, num_observations,
                     y.shape[-1], x.shape[-1], x.shape[-1]).to(y.device)
     for i in range(y.shape[-1]):
         # calculate dydx over batches for each feature value of y
@@ -26,7 +25,7 @@ def hessian(y, x):
                                    create_graph=True)[0][..., :]
 
     status = 0
-    if jittor.any(jittor.isnan(h)):
+    if torch.any(torch.isnan(h)):
         status = -1
     return h, status
 
@@ -46,16 +45,16 @@ def divergence(y, x):
     div = 0.
     for i in range(y.shape[-1]):
         div += grad(
-            y[..., i], x, jittor.ones_like(y[..., i]),
+            y[..., i], x, torch.ones_like(y[..., i]),
             create_graph=True)[0][..., i:i+1]
     return div
 
 
 def gradient(y, x, grad_outputs=None):
     if grad_outputs is None:
-        grad_outputs = jittor.ones_like(y)
-    grad = jittor.grad(
-        y, [x], retain_graph=True)[0]
+        grad_outputs = torch.ones_like(y)
+    grad = torch.autograd.grad(
+        y, [x], grad_outputs=grad_outputs, create_graph=True, allow_unused=False)[0]
 
     #print('grad: {}'.format(grad))
     return grad
@@ -70,17 +69,17 @@ def jacobian(y, x):
     """
     meta_batch_size, num_observations = y.shape[:2]
     # (meta_batch_size*num_points, 2, 2)
-    jac = jittor.zeros(
+    jac = torch.zeros(
         meta_batch_size, num_observations,
         y.shape[-1], x.shape[-1]).to(y.device)
     for i in range(y.shape[-1]):
         # calculate dydx over batches for each feature value of y
         y_flat = y[...,i].view(-1, 1)
         jac[:, :, i, :] = grad(
-            y_flat, x, jittor.ones_like(y_flat), create_graph=True)[0]
+            y_flat, x, torch.ones_like(y_flat), create_graph=True)[0]
 
     status = 0
-    if jittor.any(jittor.isnan(jac)):
+    if torch.any(torch.isnan(jac)):
         status = -1
 
     return jac, status

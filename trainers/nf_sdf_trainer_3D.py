@@ -1,9 +1,8 @@
 import os
-#import torch
-import jittor
+import torch
 import importlib
 import os.path as osp
-#import torch.nn.functional as F
+import torch.nn.functional as F
 from trainers.utils.diff_ops import gradient
 from trainers.utils.vis_utils import imf2mesh
 from trainers.base_trainer import BaseTrainer
@@ -49,10 +48,10 @@ class Trainer(BaseTrainer):
         ndf_loss_weight = float(getattr(
             self.cfg.trainer, "ndf_loss_weight", 1.))
         if ndf_loss_weight > 0:
-            loss_y_ndf = ((jittor.abs(out) - dist) ** 2).view(bs, -1).mean()
+            loss_y_ndf = ((torch.abs(out) - dist) ** 2).view(bs, -1).mean()
             loss_y_ndf *= ndf_loss_weight
         else:
-            loss_y_ndf = jittor.zeros(1).cuda().float()
+            loss_y_ndf = torch.zeros(1).cuda().float()
 
         sdf_loss_weight = float(getattr(
             self.cfg.trainer, "sdf_loss_weight", 0.))
@@ -61,34 +60,34 @@ class Trainer(BaseTrainer):
             loss_y_sdf = ((out - dist * sign) ** 2).view(bs, -1).mean()
             loss_y_sdf *= sdf_loss_weight
         else:
-            loss_y_sdf = 0. * jittor.zeros(1).to(loss_y_ndf)
+            loss_y_sdf = 0. * torch.zeros(1).to(loss_y_ndf)
 
         occ_loss_weight = float(getattr(
             self.cfg.trainer, "occ_loss_weight", 0.))
         if 'sign' in data and occ_loss_weight > 0:
             target = (data['sign'].cuda().float() >= 0).float()
             loss_occ = F.binary_cross_entropy(
-                jittor.sigmoid(out), target
+                torch.sigmoid(out), target
             )
             loss_occ *= occ_loss_weight
         else:
-            loss_occ = 0. * jittor.zeros(1).cuda().float()
+            loss_occ = 0. * torch.zeros(1).cuda().float()
 
         grad_norm_weight = float(getattr(
             self.cfg.trainer, "grad_norm_weight", 0.))
         grad_norm_num_points = int(getattr(
             self.cfg.trainer, "grad_norm_num_points", 0))
         if grad_norm_weight > 0. and grad_norm_num_points > 0:
-            xyz = jittor.rand(
+            xyz = torch.rand(
                 bs, grad_norm_num_points, xyz.size(-1)).to(xyz) * 2 - 1
             xyz = xyz.cuda()
             xyz.requires_grad = True
             grad_norm = gradient(self.net(xyz), xyz).view(
                 bs, -1, xyz.size(-1)).norm(dim=-1)
             loss_unit_grad_norm = F.mse_loss(
-                grad_norm, jittor.ones_like(grad_norm)) * grad_norm_weight
+                grad_norm, torch.ones_like(grad_norm)) * grad_norm_weight
         else:
-            loss_unit_grad_norm = 0. * jittor.zeros(1).to(loss_y_ndf)
+            loss_unit_grad_norm = 0. * torch.zeros(1).to(loss_y_ndf)
         loss = loss_unit_grad_norm + loss_y_ndf + loss_y_sdf + loss_occ
 
         if not no_update:
@@ -120,7 +119,7 @@ class Trainer(BaseTrainer):
                 writer.add_scalar('train/' + kn, v, writer_step)
 
         if visualize:
-            with jittor.no_grad():
+            with torch.no_grad():
                 print("Visualize: %s" % step)
                 res = int(getattr(self.cfg.trainer, "vis_mc_res", 256))
                 thr = float(getattr(self.cfg.trainer, "vis_mc_thr", 0.))
@@ -146,11 +145,11 @@ class Trainer(BaseTrainer):
         if appendix is not None:
             d.update(appendix)
         save_name = "epoch_%s_iters_%s.pt" % (epoch, step)
-        jittor.save(d, osp.join(self.cfg.save_dir, "checkpoints", save_name))
-        jittor.save(d, osp.join(self.cfg.save_dir, "latest.pt"))
+        torch.save(d, osp.join(self.cfg.save_dir, "checkpoints", save_name))
+        torch.save(d, osp.join(self.cfg.save_dir, "latest.pt"))
 
     def resume(self, path, strict=True, **kwargs):
-        ckpt = jittor.load(path)
+        ckpt = torch.load(path)
         self.net.load_state_dict(ckpt['net'], strict=strict)
         self.opt.load_state_dict(ckpt['opt'])
         start_epoch = ckpt['epoch']

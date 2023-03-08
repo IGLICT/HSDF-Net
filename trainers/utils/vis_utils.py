@@ -3,8 +3,7 @@ from __future__ import division
 from __future__ import print_function
 
 import tqdm
-#import torch
-import jittor
+import torch
 import trimesh
 import skimage
 import numpy as np
@@ -31,8 +30,8 @@ def imf2mesh(imf, res=256, threshold=0.0, batch_size = 10000, verbose=True,
     for i in pbar:
         sidx, eidx = i, i + batch_size
         eidx = min(grid.shape[0], eidx)
-        with jittor.no_grad():
-            xyz = jittor.Var(
+        with torch.no_grad():
+            xyz = torch.from_numpy(
                 grid[sidx:eidx, :]).float().cuda().view(1, -1, 3)
             if use_double:
                 xyz = xyz.double()
@@ -85,10 +84,10 @@ def imf2mesh(imf, res=256, threshold=0.0, batch_size = 10000, verbose=True,
 
 
 def make_2d_grid(r, add_noise=False):
-    xs, ys = jittor.meshgrid(jittor.arange(r), jittor.arange(r))    
-    xy = jittor.cat([ys.reshape(-1, 1), xs.reshape(-1, 1)], dim=-1).float()
+    xs, ys = torch.meshgrid(torch.arange(r), torch.arange(r))    
+    xy = torch.cat([ys.reshape(-1, 1), xs.reshape(-1, 1)], dim=-1).float()
     if add_noise:
-        xy += jittor.rand_like(xy)
+        xy += torch.rand_like(xy)
     else:
         xy += 0.5
     xy = (xy / float(r) - 0.5) * 2
@@ -106,7 +105,7 @@ def imf2img(imf, res=256, add_noise=False, batch_size=10000, threshold=0.,
     for i in pbar:
         sidx, eidx = i, i + batch_size
         eidx = min(grid.shape[0], eidx)
-        with jittor.no_grad():
+        with torch.no_grad():
             xyz = grid[sidx:eidx, :].cuda().view(1, -1, 2)
             n = xyz.size(1)
             distances = imf(xyz)

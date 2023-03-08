@@ -1,6 +1,5 @@
 import os
-#import torch
-import jittor
+import torch
 import importlib
 import os.path as osp
 from trainers.base_trainer import BaseTrainer
@@ -28,7 +27,7 @@ class Trainer(BaseTrainer):
             self.original_decoder = sn_lib.Net(cfg, cfg.models.net)
             self.original_decoder.cuda()
             self.original_decoder.load_state_dict(
-                jittor.load(cfg.models.net.path)['net'])
+                torch.load(cfg.models.net.path)['net'])
             print("Original Decoder:")
             print(self.original_decoder)
         else:
@@ -101,7 +100,7 @@ class Trainer(BaseTrainer):
                 use_surf_points=boundary_loss_use_surf_points)
             loss_y_boundary = loss_y_boundary * boundary_loss_weight
         else:
-            loss_y_boundary = jittor.zeros(1).float().cuda()
+            loss_y_boundary = torch.zeros(1).float().cuda()
 
         grad_norm_weight = float(getattr(
             self.cfg.trainer, "grad_norm_weight", 1e-2))
@@ -115,7 +114,7 @@ class Trainer(BaseTrainer):
             )
             loss_unit_grad_norm *= grad_norm_weight
         else:
-            loss_unit_grad_norm = jittor.zeros(1).float().cuda()
+            loss_unit_grad_norm = torch.zeros(1).float().cuda()
 
         lap_loss_weight = float(getattr(
             self.cfg.trainer, "lap_loss_weight", 1e-4))
@@ -133,7 +132,7 @@ class Trainer(BaseTrainer):
             )
             loss_lap_scaling = loss_lap_scaling * lap_loss_weight
         else:
-            loss_lap_scaling = jittor.zeros(1).float().cuda()
+            loss_lap_scaling = torch.zeros(1).float().cuda()
 
         loss = loss_unit_grad_norm + loss_y_boundary + loss_lap_scaling
         if not no_update:
@@ -190,10 +189,10 @@ class Trainer(BaseTrainer):
             d.update(appendix)
         save_name = "epoch_%s_iters_%s.pt" % (epoch, step)
         path = osp.join(self.cfg.save_dir, "checkpoints", save_name)
-        jittor.save(d, path)
+        torch.save(d, path)
 
     def resume(self, path, strict=True, **kwargs):
-        ckpt = jittor.load(path)
+        ckpt = torch.load(path)
         self.original_decoder.load_state_dict(ckpt['orig_dec'], strict=strict)
         self.decoder.load_state_dict(ckpt['dec'], strict=strict)
         self.opt_dec.load_state_dict(ckpt['opt_dec'])

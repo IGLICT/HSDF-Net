@@ -1,6 +1,5 @@
 import os
-#import torch
-import jittor
+import torch
 import trimesh
 import numpy as np
 from argparse import Namespace
@@ -36,9 +35,9 @@ class Trainer(BaseTrainer):
     def update(self, data, *args, **kwargs):
         if self.presmp_npoints is not None:
             uniform_pcl_orig = self.original_mesh.sample(self.presmp_npoints)
-            with jittor.no_grad():
+            with torch.no_grad():
                 x_invert_uniform = self.net.deform.invert(
-                    jittor.Var(uniform_pcl_orig).float().cuda().view(-1, 3),
+                    torch.from_numpy(uniform_pcl_orig).float().cuda().view(-1, 3),
                     iters=30
                 ).view(1, -1, 3).cuda().float()
 
@@ -64,7 +63,7 @@ class Trainer(BaseTrainer):
             writer=None, step=None, epoch=None, **kwargs):
         res = int(getattr(self.cfg.trainer, "vis_mc_res", 64))
         thr = float(getattr(self.cfg.trainer, "vis_mc_thr", 0.))
-        with jittor.no_grad():
+        with torch.no_grad():
             print("Visualize: %s %s" % (step, epoch))
             mesh = imf2mesh(
                 lambda x: self.net(x, None), res=res, threshold=thr,
@@ -88,7 +87,7 @@ class Trainer(BaseTrainer):
         area_ratio = 0.
         vol_ratio = 0.
 
-        with jittor.no_grad():
+        with torch.no_grad():
             new_mesh, new_mesh_stats = imf2mesh(
                 lambda x: self.net(x),
                 res=self.res, threshold=self.thr,
@@ -116,17 +115,17 @@ class Trainer(BaseTrainer):
                     print(gtr_pcl0.shape, gtr_pcl1.shape, out_pcl.shape)
 
                     cd_gtr, dists_gtr = CD(
-                        jittor.Var(gtr_pcl0), jittor.Var(gtr_pcl1))
+                        torch.from_numpy(gtr_pcl0), torch.from_numpy(gtr_pcl1))
                     cd_out, dists_out = CD(
-                        jittor.Var(gtr_pcl0), jittor.Var(out_pcl))
+                        torch.from_numpy(gtr_pcl0), torch.from_numpy(out_pcl))
                     cd_ratio = cd_out / (cd_gtr + 1e-8)
 
                     emd_gtr, _ = EMD(
-                        jittor.Var(gtr_pcl0), jittor.Var(gtr_pcl1),
+                        torch.from_numpy(gtr_pcl0), torch.from_numpy(gtr_pcl1),
                         dist=dists_gtr
                     )
                     emd_out, _ = EMD(
-                        jittor.Var(gtr_pcl0), jittor.Var(out_pcl),
+                        torch.from_numpy(gtr_pcl0), torch.from_numpy(out_pcl),
                         dist=dists_out
                     )
                     emd_ratio = emd_out / (emd_gtr + 1e-8)

@@ -1,45 +1,72 @@
 from __future__ import division
-import jittor
-import jittor.optim as optim
-import jittor.nn as nn
-
-from trainers.losses.filtering_losses import loss_lap, loss_lap_dsdf
-from trainers.losses.eikonal_loss import loss_eikonal, loss_eikonal_dsdf
-
+import enum
+from utils import reduce_tensor
+import torch
+import torch.optim as optim
+from torch.nn import functional as F
+import os
+from torch.serialization import validate_cuda_device
+from torch.utils.tensorboard import SummaryWriter
 from glob import glob
 import numpy as np
 import time
-import os
 
-from tensorboardX import SummaryWriter
+from apex.parallel import convert_syncbn_model
+from apex import amp
+from apex.parallel import DistributedDataParallel as DDP
+from trainers.losses.filtering_losses import loss_lap, loss_lap_dsdf
+from trainers.losses.eikonal_loss import loss_eikonal, loss_eikonal_dsdf
+
 
 class Trainer(object):
 
     def __init__(
         self, 
         model, 
-        #device, 
+        device, 
         train_dataset, 
         val_dataset, 
         exp_name, 
         optimizer='Adam', 
         lr = 1e-4, 
         threshold = 0.1, 
+        local_rank=0, 
         cls_threshold=0.2):
-
-        self.model = model
-
+        
+        # apex
+        self.local_rank = local_rank
+        self.model = convert_syncbn_model(model)
+        
+        self.model = self.model.to(device)
+        self.device = device
         if optimizer == 'Adam':
             self.optimizer = optim.Adam(self.model.parameters(), lr= lr)
+        if optimizer == 'Adadelta':
+            self.optimizer = optim.Adadelta(self.model.parameters())
         if optimizer == 'RMSprop':
             self.optimizer = optim.RMSprop(self.model.parameters(), momentum=0.9)
 
+        # apex initialization
+        amp.register_float_function(torch, 'sigmoid')
+        amp.register_float_function(torch, 'softmax')
+
+        #print('before: {}'.format(self.model.conv_in.weight))
+        #print(dir(self.model))
+
+        self.model, self.optimizer = amp.initialize(self.model, self.optimizer, opt_level='O0')
+        
+        #print('after: {}'.format(self.model.conv_in.weight))
+        
+        self.model = DDP(self.model, delay_allreduce=True)
+
+        
+        #print('after: {}'.format([v for v in self.model.parameters()]))
 
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
         self.exp_path = os.path.dirname(__file__) + '/../experiments/{}/'.format( exp_name)
         self.checkpoint_path = self.exp_path + 'checkpoints/'.format( exp_name)
-        if jittor.rank == 0:
+        if self.local_rank == 0:
             if not os.path.exists(self.checkpoint_path):
                 print(self.checkpoint_path)
                 os.makedirs(self.checkpoint_path)
@@ -55,24 +82,20 @@ class Trainer(object):
         self.model.train()
         self.optimizer.zero_grad()
         loss, acc = self.compute_loss(batch)
-        #loss.backward()
-        #self.optimizer.step(loss)
-        print("loss {}".format(loss))
-        self.optimizer.backward(loss)
+        with amp.scale_loss(loss, self.optimizer) as scaled_loss:
+            scaled_loss.backward()
         self.optimizer.step()
 
         # map-reduce loss and acc
-        reduced_loss, reduced_acc = loss, acc
-        if jittor.in_mpi:
-            reduced_loss = loss.mpi_all_reduce()# / jittor.world_size
-            reduced_acc = acc.mpi_all_reduce()# / jittor.world_size
+        reduced_loss = reduce_tensor(loss.data)
+        reduced_acc = reduce_tensor(acc.data)
 
         return reduced_loss.item(), reduced_acc.item()
 
     def compute_loss(self,batch):
-        #device = self.device
+        device = self.device
 
-        p = batch.get('grid_coords')#.to(device)
+        p = batch.get('grid_coords').to(device)
 
         # clamp p to -1,1
         #p = torch.clamp(p, max=1., min=-1.)
@@ -80,8 +103,8 @@ class Trainer(object):
         # for computing curvature
         #p.requires_grad = True
 
-        df_gt = batch.get('df')#.to(device) #(Batch,num_points)
-        inputs = batch.get('inputs')#.to(device)
+        df_gt = batch.get('df').to(device) #(Batch,num_points)
+        inputs = batch.get('inputs').to(device)
 
         #print('input max: {}'.format(torch.max(inputs)))
         #print('input min: {}'.format(torch.min(inputs)))
@@ -97,17 +120,17 @@ class Trainer(object):
 
         # have to split abs val traning and sign traning, cauz they're conflicting at open regions
         # regression loss
-        loss_r = nn.L1Loss()(
-            jittor.clamp(df_pred, max_v=self.max_dist, min_v=0.),
-            jittor.clamp(jittor.abs(df_gt), max_v=self.max_dist))# out = (B,num_points) by componentwise comparing vecots of size num_samples:
+        loss_r = torch.nn.L1Loss(reduction='none')(
+            torch.clamp(df_pred, max=self.max_dist, min=0.),
+            torch.clamp(torch.abs(df_gt), max=self.max_dist))# out = (B,num_points) by componentwise comparing vecots of size num_samples:
         
         #loss_r = torch.nn.L1Loss(reduction='none')(
         #    df_pred,
         #    torch.abs(df_gt))# out = (B,num_points) by componentwise comparing vecots of size num_samples:
 
-        loss_c = nn.L1Loss()(
-            jittor.clamp(p_r, max_v=self.max_dist, min_v=-self.max_dist),
-            jittor.clamp(df_gt, max_v=self.max_dist, min_v=-self.max_dist))# out = (B,num_points) by componentwise comparing vecots of size num_samples:
+        loss_c = torch.nn.L1Loss(reduction='none')(
+            torch.clamp(p_r, max=self.max_dist, min=-self.max_dist),
+            torch.clamp(df_gt, max=self.max_dist, min=-self.max_dist))# out = (B,num_points) by componentwise comparing vecots of size num_samples:
         
 
         # classification loss
@@ -162,29 +185,29 @@ class Trainer(object):
 
     def train_model(self, epochs):
         loss = 0
-        train_data_loader = self.train_dataset
+        train_data_loader = self.train_dataset.get_loader()
         start, training_time = self.load_checkpoint()
         iteration_start_time = time.time()
 
         for epoch in range(start, epochs):
             sum_loss = 0
             sum_acc = 0
-            if jittor.rank == 0:
+            if self.local_rank == 0:
                 print('Start epoch {}'.format(epoch))
 
             # shuffle ditributed sampler
-            #train_data_loader.sampler.set_epoch(epoch)
+            train_data_loader.sampler.set_epoch(epoch)
 
             print("loader length: {}".format(len(train_data_loader)))
 
             for idx, batch in enumerate(train_data_loader):
                 #print('idx: {}'.format(idx))
 
-                if jittor.rank == 0:
+                if self.local_rank == 0:
                     #save model
                     iteration_duration = time.time() - iteration_start_time
                     if iteration_duration > 60 * 60:  # eve model every X min and at start
-                        #print('{} eval'.format(self.local_rank))
+                        print('{} eval'.format(self.local_rank))
                         
                         training_time += iteration_duration
                         iteration_start_time = time.time()
@@ -204,17 +227,16 @@ class Trainer(object):
                         self.writer.add_scalar('val loss batch avg', val_loss, epoch)
                         self.writer.add_scalar('val acc batch avg', val_acc, epoch)
 
-
                 #optimize model
                 loss, acc = self.train_step(batch)
-                if jittor.rank == 0:
+                if self.local_rank == 0:
                     print("Current loss: {} acc: {}".format(loss / self.train_dataset.num_sample_points, acc))
                 sum_loss += loss
                 sum_acc += acc
 
 
 
-            if jittor.rank == 0:
+            if self.local_rank == 0:
                 self.writer.add_scalar('training loss last batch', loss, epoch)
                 self.writer.add_scalar('training loss batch avg', sum_loss / len(train_data_loader), epoch)
                 self.writer.add_scalar('training acc batch avg', sum_acc / len(train_data_loader), epoch)
@@ -224,11 +246,12 @@ class Trainer(object):
 
     def save_checkpoint(self, epoch, training_time):
         path = self.checkpoint_path + 'checkpoint_{}h_{}m_{}s_{}.tar'.format(*[*convertSecs(training_time),training_time])
-        if not os.path.exists(path) and jittor.rank == 0:
-            jittor.save({ #'state': torch.cuda.get_rng_state_all(),
+        if not os.path.exists(path) and self.local_rank == 0:
+            torch.save({ #'state': torch.cuda.get_rng_state_all(),
                         'training_time': training_time ,'epoch':epoch,
                         'model_state_dict': self.model.state_dict(),
-                        'optimizer_state_dict': self.optimizer.state_dict()}, path)
+                        'optimizer_state_dict': self.optimizer.state_dict(),
+                        'amp_state_dict':amp.state_dict()}, path)
 
 
 
@@ -248,7 +271,7 @@ class Trainer(object):
         #path = self.checkpoint_path + 'checkpoint_{}h:{}m:{}s_{}.tar'.format(*[*convertSecs(checkpoints[-1]),checkpoints[-1]])
 
         print('Loaded checkpoint from: {}'.format(path))
-        checkpoint = jittor.load(path)
+        checkpoint = torch.load(path, map_location=self.device)
 
         # load partially
         #print(checkpoint['optimizer_state_dict']['param_groups'])
@@ -257,17 +280,17 @@ class Trainer(object):
         #exit()
 
         if 'module' in list(checkpoint['model_state_dict'].keys())[0]:
-            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         else:
             print('load from without apex')
-            self.model.load_state_dict({'module.'+k:v for k,v in checkpoint['model_state_dict'].items()})
+            self.model.load_state_dict({'module.'+k:v for k,v in checkpoint['model_state_dict'].items()}, strict=False)
 
         epoch = 0
         training_time = 0
 
         try:
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            #amp.load_state_dict(checkpoint['amp_state_dict'])
+            amp.load_state_dict(checkpoint['amp_state_dict'])
             epoch = checkpoint['epoch']
             training_time = checkpoint['training_time']
         except:
@@ -285,8 +308,8 @@ class Trainer(object):
             try:
                 val_batch = self.val_data_iterator.next()
             except:
-                self.val_data_iterator = self.val_dataset.__iter__()
-                val_batch = self.val_data_iterator.__next__()
+                self.val_data_iterator = self.val_dataset.get_loader().__iter__()
+                val_batch = self.val_data_iterator.next()
 
             #val_loss, val_acc = self.compute_loss( val_batch)
             sum_val_loss += self.compute_loss( val_batch)[0].data.item()

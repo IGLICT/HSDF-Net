@@ -1,5 +1,4 @@
-#import torch
-import jittor
+import torch
 from trainers.utils.diff_ops import gradient, jacobian
 
 
@@ -14,7 +13,7 @@ def outter(v1, v2):
     d = v1.size(1)
     v1 = v1.view(bs, d, 1)
     v2 = v2.view(bs, 1, d)
-    return jittor.bmm(v1, v2)
+    return torch.bmm(v1, v2)
 
 
 def _addr_(mat, vec1, vec2, alpha=1., beta=1.):
@@ -62,10 +61,10 @@ def get_surf_pcl_rejection(
     """
     out = []
     cnt = 0
-    with jittor.no_grad():
+    with torch.no_grad():
         while cnt < npoints:
-            x = jittor.rand(1, batch_size, dim).cuda().float() * 2 - 1
-            y = jittor.abs(net(x))
+            x = torch.rand(1, batch_size, dim).cuda().float() * 2 - 1
+            y = torch.abs(net(x))
             m = (y < thr).view(1, batch_size)
             m_cnt = m.sum().detach().cpu().item()
             if m_cnt < 1:
@@ -73,7 +72,7 @@ def get_surf_pcl_rejection(
             x_eq = x[m].view(m_cnt, dim)
             out.append(x_eq)
             cnt += m_cnt
-    rej_x = x = jittor.cat(out, dim=0)[:npoints, :]
+    rej_x = x = torch.cat(out, dim=0)[:npoints, :]
 
     if x.is_leaf:
         x.requires_grad = True
@@ -97,29 +96,29 @@ def get_surf_pcl_langevin_dynamic(
     already_repeated = 0
     while out_cnt < npoints and already_repeated < max_repeat:
         already_repeated += 1
-        x = jittor.rand(npoints, dim).cuda().float() * 2 - 1
+        x = torch.rand(npoints, dim).cuda().float() * 2 - 1
         for i in range(steps):
             sigma_i = noise_sigma * sigma_decay ** i
-            x = x.detach() + jittor.randn_like(x).to(x) * sigma_i
+            x = x.detach() + torch.randn_like(x).to(x) * sigma_i
             x.requires_grad = True
             y = net(x)
-            if jittor.allclose(y, jittor.zeros_like(y)):
+            if torch.allclose(y, torch.zeros_like(y)):
                 break
 
             g = gradient(y, x).view(npoints, dim).detach()
             g = g / (g.norm(dim=-1, keepdim=True) + eps)
-            x = jittor.clamp(x - g * y, min_v=-bound, max_v=bound)
+            x = torch.clamp(x - g * y, min=-bound, max=bound)
 
         if filtered:
-            with jittor.no_grad():
+            with torch.no_grad():
                 y = net(x)
-                mask = (jittor.abs(y) < eps).view(-1, 1)
+                mask = (torch.abs(y) < eps).view(-1, 1)
                 x = x.view(-1, dim).masked_select(mask).view(-1, dim)
                 out_cnt += x.shape[0]
                 if out is None:
                     out = x
                 else:
-                    out = jittor.cat([x, out], dim=0)
+                    out = torch.cat([x, out], dim=0)
         else:
             out = x
             out_cnt = npoints
@@ -149,7 +148,7 @@ def tangential_projection_matrix(y, x, norm=True, eps=1e-6):
     else:
         normals = grad.view(bs, npoints, dim)
     normals_proj = _addr_(
-        jittor.eye(dim).view(1, 1, dim, dim).expand(bs, npoints, -1, -1).to(y),
+        torch.eye(dim).view(1, 1, dim, dim).expand(bs, npoints, -1, -1).to(y),
         normals, normals, alpha=-1
     )
     return normals, normals_proj
@@ -180,7 +179,7 @@ def compute_invert_weight(
         yn, yn_proj = tangential_projection_matrix(inp_nf(y), y)
         xn, xn_proj = tangential_projection_matrix(out_nf(x), x)
 
-        J = jittor.bmm(
+        J = torch.bmm(
             J.view(-1, dim, dim),
             xn_proj.view(-1, dim, dim)
         )
@@ -188,7 +187,7 @@ def compute_invert_weight(
                    yn.view(bs, npoints, dim),
                    xn.view(bs, npoints, dim))
 
-    weight = jittor.abs(jittor.linalg.det(J.view(bs * npoints, dim, dim)))
+    weight = torch.abs(torch.linalg.det(J.view(bs * npoints, dim, dim)))
     if int(dim) == 3:
         weight = weight ** 2
     weight = 1. / weight.view(bs, npoints)
@@ -238,10 +237,10 @@ def sample_points(
             x = get_surf_pcl(
                 out_nf, npoints=npoints, dim=dim, use_rejection=use_rejection
             ).detach().cuda().float()
-            weight = jittor.ones(1, npoints).cuda().float()
+            weight = torch.ones(1, npoints).cuda().float()
     else:
-        x = jittor.rand(1, npoints, dim).cuda().float() * 2 - 1
-        weight = jittor.ones(1, npoints).cuda().float()
+        x = torch.rand(1, npoints, dim).cuda().float() * 2 - 1
+        weight = torch.ones(1, npoints).cuda().float()
         if invert_sampling:
             assert deform is not None
             y = x

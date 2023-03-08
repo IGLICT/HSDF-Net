@@ -1,19 +1,28 @@
-import jittor
+from numpy.lib.function_base import disp
+import torch
 import os
-import numpy as np
 from glob import glob
-import jittor
-import jittor.nn as nn
+import numpy as np
+from torch.functional import norm
+from torch.nn import functional as F
 import time
+from mesh_to_sdf import sample_sdf_near_surface, mesh_to_voxels, mesh_to_sdf
+from mesh_to_sdf.utils import get_raster_points
+from torch.nn.modules.pooling import AvgPool3d
 from skimage.measure import marching_cubes
+import sys
+from subprocess import call
 from sklearn.preprocessing import normalize
+#from mpl_toolkits.mplot3d import axes3d
+#import matplotlib.pyplot as plt
+#import matplotlib
+#matplotlib.use('Agg')
 
 class Generator(object):
-    def __init__(self, model, exp_name, threshold = 0.05, checkpoint = None, cls_threshold=0.2):
-        #self.model = model.to(device)
-        self.model = model
+    def __init__(self, model, exp_name, threshold = 0.05, checkpoint = None, device = torch.device("cuda"), cls_threshold=0.2):
+        self.model = model.to(device)
         self.model.eval()
-        #self.device = device
+        self.device = device
         self.checkpoint_path = os.path.dirname(__file__) + '/../experiments/{}/checkpoints/'.format( exp_name)
         self.load_checkpoint(checkpoint)
         self.threshold = threshold
@@ -27,12 +36,12 @@ class Generator(object):
 
     def generate_mesh(self, data, voxel_resolution=128, EPS=0, chunk_num=128, num_steps=5):
 
-        start = time.time() 
-        inputs = data['inputs']
+        start = time.time()
+        inputs = data['inputs'].to(self.device)
 
         # add noises
         sigma = 0.02
-        inputs += sigma * jittor.randn(inputs.shape)
+        inputs += sigma * torch.randn(inputs.shape).to(self.device)
 
         for param in self.model.parameters():
             param.requires_grad = False
@@ -53,18 +62,18 @@ class Generator(object):
         #            get_raster_points(
         #                voxel_resolution=voxel_resolution)).to(self.device)
         #points = points.reshape([voxel_resolution]*3 + [3])
-        points_gpu = jittor.array(points)
+        points_gpu = torch.from_numpy(points).to(self.device)
 
-        avgpool3d = nn.AvgPool3d(kernel_size=2, stride=1)
-        centers = avgpool3d(jittor.array(np.expand_dims(points_gpu.permute(3,0,1,2), axis=0))).permute(0,2,3,4,1)
+        avgpool3d = torch.nn.AvgPool3d(kernel_size=2, stride=1)
+        centers = avgpool3d(points_gpu.permute(3,0,1,2)).permute(1,2,3,0)
         centers = centers.reshape([1,-1,3])
         points_gpu = points_gpu.reshape([1,-1,3])
         centers = centers.detach()
         points_gpu = points_gpu.detach()
 
         # split into chunks
-        center_chunks = jittor.chunk(centers, chunks=chunk_num, dim=1)
-        points_gpu_chunks = jittor.chunk(points_gpu, chunks=chunk_num, dim=1)
+        center_chunks = torch.chunk(centers, chunks=chunk_num, dim=1)
+        points_gpu_chunks = torch.chunk(points_gpu, chunks=chunk_num, dim=1)
 
         # encode
         encoding = self.model.encoder(inputs)
@@ -85,29 +94,22 @@ class Generator(object):
             center = center.detach()
             center.requires_grad = True
 
-            with jittor.no_grad():
+            with torch.no_grad():
                 udf, p_r_init = self.model.decoder(point, *encoding)
                 sign = (p_r_init>0.).float()*2-1
-
-            center_debug = self.model.decoder(center, *encoding)[0]
-            center_debug.sync()
-            #centers_df_pred = jittor.clamp(center_debug, min_v=None, max_v=self.threshold)
-            #np.savetxt("center_log.txt", center_debug.numpy())
-            centers_df_pred = center_debug.minimum(self.threshold)
+            
             # decode
-            #centers_df_pred = jittor.clamp(
-            #    self.model.decoder(center, *encoding)[0], 
-            #    max_v=self.threshold)
+            centers_df_pred = torch.clamp(
+                self.model.decoder(center, *encoding)[0], 
+                max=self.threshold)
 
-            #centers_df_pred.sum().backward()
-            center_grad = jittor.grad(centers_df_pred.sum(), center, retain_graph=False)
+            centers_df_pred.sum().backward()
 
-            #gradient_cpu = np.concatenate([gradient_cpu, center.grad.detach().numpy()], axis=1)
-            gradient_cpu = np.concatenate([gradient_cpu, center_grad.detach().numpy()], axis=1)
-            centers_cpu = np.concatenate([centers_cpu, center.detach().numpy()], axis=1)
-            centers_sdf_cpu = np.concatenate([centers_sdf_cpu, centers_df_pred.detach().numpy()], axis=1)
-            sign_cpu = np.concatenate([sign_cpu, sign.detach().numpy()], axis=1)
-            points_udf_cpu = np.concatenate([points_udf_cpu, udf.detach().numpy()], axis=1)
+            gradient_cpu = np.concatenate([gradient_cpu, center.grad.detach().cpu().numpy()], axis=1)
+            centers_cpu = np.concatenate([centers_cpu, center.detach().cpu().numpy()], axis=1)
+            centers_sdf_cpu = np.concatenate([centers_sdf_cpu, centers_df_pred.detach().cpu().numpy()], axis=1)
+            sign_cpu = np.concatenate([sign_cpu, sign.detach().cpu().numpy()], axis=1)
+            points_udf_cpu = np.concatenate([points_udf_cpu, udf.detach().cpu().numpy()], axis=1)
 
 
         gradient = gradient_cpu.reshape([voxel_resolution-1]*3 + [3])
@@ -199,11 +201,11 @@ class Generator(object):
         sign_by_value_cpu = sign_cpu.copy() * 10
         sign_by_value_cpu_filtered = np.zeros((1,0))
 
-        points_filtered = jittor.array(points[mask==1]).reshape(1,-1,3)
+        points_filtered = torch.from_numpy(points[mask==1]).to(self.device).reshape(1,-1,3)
 
         #print('points_filtered shape: {}'.format(points_filtered.shape))
 
-        point_chunks = jittor.chunk(points_filtered, chunks=chunk_num, dim=1)
+        point_chunks = torch.chunk(points_filtered, chunks=chunk_num, dim=1)
 
         for i in range(len(point_chunks)):
 
@@ -300,15 +302,13 @@ class Generator(object):
             #grid_dis_grad_init = torch.Tensor([0,-1,0]).to(self.device)
             '''
 
-            grad_outputs = jittor.ones_like(udf)
-            #grid_udf_grad = torch.autograd.grad(udf, [point], grad_outputs=grad_outputs, retain_graph=True)[0]
-            grid_udf_grad = jittor.grad(udf, point, retain_graph=False)
-            grid_udf_grad = jittor.normalize(grid_udf_grad,dim=-1)
+            grad_outputs = torch.ones_like(udf)
+            grid_udf_grad = torch.autograd.grad(udf, [point], grad_outputs=grad_outputs, retain_graph=True)[0]
+            grid_udf_grad = F.normalize(grid_udf_grad,dim=-1)
 
-            grad_outputs = jittor.ones_like(sign_by_value)
-            #grid_sign_grad = torch.autograd.grad(sign_by_value, [point], grad_outputs=grad_outputs)[0]
-            grid_sign_grad = jittor.grad(sign_by_value, point, retain_graph=False)
-            grid_sign_grad = jittor.normalize(grid_sign_grad,dim=-1)
+            grad_outputs = torch.ones_like(sign_by_value)
+            grid_sign_grad = torch.autograd.grad(sign_by_value, [point], grad_outputs=grad_outputs)[0]
+            grid_sign_grad = F.normalize(grid_sign_grad,dim=-1)
 
             sign = ((grid_udf_grad * grid_sign_grad).sum(-1)>0).float()*2-1
 
@@ -316,25 +316,24 @@ class Generator(object):
             #with torch.no_grad():
             #    grid_dis_shift = self.model.decoder(grid_point_shift, *encoding)[0]
             #sign = (grid_dis_shift>dis_pred_init).float()*2-1
-            udf.sync()
-            sign.sync()
+
             points_df_pred = udf * sign
             
             # DEBUG
             #points_df_pred = (cls_pred.argmax(dim=1)*2-1).float()
             #points_df_pred = p_r_init.logits
 
-            #points_cpu = np.concatenate([points_cpu, point.detach().numpy()], axis=1)
-            points_sdf_cpu_filtered = np.concatenate([points_sdf_cpu_filtered, points_df_pred.detach().numpy()], axis=1)
-            #points_udf_cpu_filtered = np.concatenate([points_udf_cpu_filtered, dis_pred_init.detach().numpy()], axis=1)
+            #points_cpu = np.concatenate([points_cpu, point.detach().cpu().numpy()], axis=1)
+            points_sdf_cpu_filtered = np.concatenate([points_sdf_cpu_filtered, points_df_pred.detach().cpu().numpy()], axis=1)
+            #points_udf_cpu_filtered = np.concatenate([points_udf_cpu_filtered, dis_pred_init.detach().cpu().numpy()], axis=1)
             
-            sign_by_value_cpu_filtered = np.concatenate([sign_by_value_cpu_filtered, sign_by_value.detach().numpy()], axis=1)
+            sign_by_value_cpu_filtered = np.concatenate([sign_by_value_cpu_filtered, sign_by_value.detach().cpu().numpy()], axis=1)
 
             '''
             # plot vector field
-            point_cpu = point[0].detach().numpy()
-            grid_logits_grad_cpu = grid_logits_grad[0].detach().numpy()
-            grid_dis_grad_cpu = grid_dis_grad[0].detach().numpy()
+            point_cpu = point[0].detach().cpu().numpy()
+            grid_logits_grad_cpu = grid_logits_grad[0].detach().cpu().numpy()
+            grid_dis_grad_cpu = grid_dis_grad[0].detach().cpu().numpy()
 
             fig = plt.figure()
             ax = fig.gca(projection='3d')
@@ -422,9 +421,8 @@ class Generator(object):
 
     def generate_point_cloud(self, data, num_steps = 5, num_points = 900000, filter_val = 0.009):
 
-        jittor.gc()
         start = time.time()
-        inputs = data['inputs']
+        inputs = data['inputs'].to(self.device)
 
 
         for param in self.model.parameters():
@@ -432,7 +430,7 @@ class Generator(object):
 
         sample_num = 100000
         samples_cpu = np.zeros((0, 3))
-        samples = jittor.rand(1, sample_num, 3).float() * 3 - 1.5
+        samples = torch.rand(1, sample_num, 3).float().to(self.device) * 3 - 1.5
         samples.requires_grad = True
 
         encoding = self.model.encoder(inputs)
@@ -443,17 +441,15 @@ class Generator(object):
 
             for j in range(num_steps):
                 print('refinement', j)
-                df_pred = jittor.clamp(self.model.decoder(samples, *encoding)[0], max_v=self.threshold)
+                df_pred = torch.clamp(self.model.decoder(samples, *encoding)[0], max=self.threshold)
 
-                sample_grad = jittor.grad(df_pred.sum(), samples, retain_graph=False)
-                sample_grad.sync()
-                #df_pred.sum().backward()
+                df_pred.sum().backward()
 
-                gradient = sample_grad.detach()
+                gradient = samples.grad.detach()
                 samples = samples.detach()
                 df_pred = df_pred.detach()
                 inputs = inputs.detach()
-                samples = samples - jittor.normalize(gradient, dim=2) * df_pred.reshape(-1, 1)  # better use Tensor.copy method?
+                samples = samples - F.normalize(gradient, dim=2) * df_pred.reshape(-1, 1)  # better use Tensor.copy method?
                 samples = samples.detach()
                 samples.requires_grad = True
 
@@ -461,18 +457,12 @@ class Generator(object):
             print('finished refinement')
 
             if not i == 0:
-                samples_cpu = np.vstack((samples_cpu, samples[df_pred < filter_val].detach().numpy()))
+                samples_cpu = np.vstack((samples_cpu, samples[df_pred < filter_val].detach().cpu().numpy()))
 
-            samples = samples.detach()
-            df_pred = df_pred.detach()
-            df_pred.sync()
-            samples.sync()
-            samples_tmp = samples[df_pred < 0.03]
-            samples_tmp.sync()
-            samples = samples_tmp.unsqueeze(0)
-            indices = jittor.randint(samples.shape[1], shape=(1, sample_num))
+            samples = samples[df_pred < 0.03].unsqueeze(0)
+            indices = torch.randint(samples.shape[1], (1, sample_num))
             samples = samples[[[0, ] * sample_num], indices]
-            samples += (self.threshold / 3) * jittor.randn(samples.shape)  # 3 sigma rule
+            samples += (self.threshold / 3) * torch.randn(samples.shape).to(self.device)  # 3 sigma rule
             samples = samples.detach()
             samples.requires_grad = True
 
@@ -505,28 +495,16 @@ class Generator(object):
             #    *[*convertSecs(checkpoints[-1]), checkpoints[-1]])
         else:
             path = self.checkpoint_path + '{}.tar'.format(checkpoint)
-        print('Loaded checkpoint from: {}'.format(path)) 
-        '''
-        #torch to jittor
-        
-        import torch
-        check_torch = torch.load(path)
-        if 'module' in list(check_torch['model_state_dict'].keys())[0]:
-            self.model.load_state_dict({k[7:]:v for k,v in check_torch['model_state_dict'].items()})
-        else:
-            self.model.load_state_dict(check_torch['model_state_dict'])
-        epoch = check_torch['epoch']
-        training_time = check_torch['training_time']
-        del torch
-        '''
-        checkpoint = jittor.load(path)
+        print('Loaded checkpoint from: {}'.format(path))  
+        checkpoint = torch.load(path)
         if 'module' in list(checkpoint['model_state_dict'].keys())[0]:
-            self.model.load_state_dict({k[7:]:v for k,v in checkpoint['model_state_dict'].items()})
+            self.model.load_state_dict({k[7:]:v for k,v in checkpoint['model_state_dict'].items()}, strict=False)
         else:
-            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         epoch = checkpoint['epoch']
         training_time = checkpoint['training_time']
-        
+        print(epoch)
+        print(training_time)
         return epoch, training_time
 
 

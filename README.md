@@ -1,4 +1,4 @@
-# HSDF (Jittor): Hybrid Sign and Distance Field for Modeling Surfaces with Arbitrary Topologies
+# HSDF (PyTorch): Hybrid Sign and Distance Field for Modeling Surfaces with Arbitrary Topologies
 
 [Paper](https://openreview.net/forum?id=Soadfc-JMeX) - 
 [Project Website](http://geometrylearning.com/hsdf/) -
@@ -15,14 +15,12 @@ To address the above issue, we present a novel learnable implicit representation
 
 ## Installation
 
-The code is tested with Ubuntu 18.04, Python 3.8.12 Jittor 1.3.5.21, CUDA 11.1 and cuDNN 8005.
+The code is tested with Ubuntu 18.04, Python 3.8.12 Torch 1.8.0+cu111, CUDA 11.1 and cuDNN 8005.
 
 Set Up Environment
 
-    install anaconda and Run 'conda env create -f environment.yml' to build a environment and 'conda activate HSDF_env' to activate it
+    install anaconda and Run 'conda env create -f environment.yml' to build a environment and 'conda activate hsdf_env' to activate it
 
-    
-For the jittor installation, please refer to [this link](https://cg.cs.tsinghua.edu.cn/jittor/download).
 
 
 ## Experiment Preparation
@@ -56,12 +54,12 @@ but replacing `configs/example.txt` in the commands with the desired configurati
   
 ## Training 
     
-    Train model 'python train.py --config ./configs/example.txt
+    Train model 'python train.py --config ./configs/example1.txt
     
 ## Generate model
     
-    Download pretrained models from [this link](https://mailsucaseducn-my.sharepoint.com/:u:/g/personal/yangjie161_mails_ucas_edu_cn/Ee6jnWgGLrpOru32pOSOHQoBRTHBfSnnB5KoPkrgtuBW3Q?e=u6LqZd).
-    Run 'python generate.py --config ./configs/example.txt'
+    Download pretrained models from [this link](https://mailsucaseducn-my.sharepoint.com/:u:/g/personal/yangjie161_mails_ucas_edu_cn/EQrAPnOXqulNo89Yab0Rhk4BE4kkl8QCkJSSL5DiVixzrQ?e=nv0ftz).
+    Run 'python generate.py --config ./configs/example1.txt'
 
 ## Citation
 
@@ -72,14 +70,4 @@ If you find our work useful in your research, please consider citing:
         title = {HSDF: Hybrid Sign and Distance Field for Modeling Surfaces with Arbitrary Topologies },
         booktitle={Neural Information Processing Systems (NeurIPS)},
         year = {2022},
-    }
-    
-    @article{hu2020jittor,
-      title={Jittor: a novel deep learning framework with meta-operators and unified graph execution},
-      author={Hu, Shi-Min and Liang, Dun and Yang, Guo-Ye and Yang, Guo-Wei and Zhou, Wen-Yang},
-      journal={Science China Information Sciences},
-      volume={63},
-      number={222103},
-      pages={1--21},
-      year={2020}
     }

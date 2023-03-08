@@ -1,9 +1,8 @@
-#import torch
-#import torch.nn.functional as F
+import torch
+import torch.nn.functional as F
 from trainers.utils.diff_ops import laplace
 from trainers.utils.igp_utils import get_surf_pcl, sample_points
-import jittor
-import jittor.nn as F
+
 
 def loss_boundary(gtr, net, npoints=1000, dim=3, x=None, use_surf_points=False):
     """
@@ -37,7 +36,7 @@ def loss_boundary(gtr, net, npoints=1000, dim=3, x=None, use_surf_points=False):
 
     if use_surf_points:
         net_y = net(x)
-        loss_all = F.mse_loss(net_y, jittor.zeros_like(net_y), reduction='none')
+        loss_all = F.mse_loss(net_y, torch.zeros_like(net_y), reduction='none')
     else:
         net_y = net(x)
         gtr_y = gtr(x)
@@ -104,11 +103,11 @@ def loss_lap(
 
     diff = lap_gtr * beta - lap_net
     if masking_thr is not None:
-        mask = ((jittor.abs(lap_gtr) < masking_thr) &
-                (jittor.abs(lap_net) < masking_thr))
+        mask = ((torch.abs(lap_gtr) < masking_thr) &
+                (torch.abs(lap_net) < masking_thr))
     else:
-        mask = jittor.ones_like(lap_gtr) > 0
-    loss = F.mse_loss(diff, jittor.zeros_like(diff), reduction='none')
+        mask = torch.ones_like(lap_gtr) > 0
+    loss = F.mse_loss(diff, torch.zeros_like(diff), reduction='none')
     if use_weights:
         loss = loss * weights
     loss = loss[mask].mean()
@@ -164,11 +163,11 @@ def loss_lap_dsdf(
 
     diff = lap_gtr * beta - lap_net
     if masking_thr is not None:
-        mask = ((jittor.abs(lap_gtr) < masking_thr) &
-                (jittor.abs(lap_net) < masking_thr))
+        mask = ((torch.abs(lap_gtr) < masking_thr) &
+                (torch.abs(lap_net) < masking_thr))
     else:
-        mask = jittor.ones_like(lap_gtr) > 0
-    loss = F.mse_loss(diff, jittor.zeros_like(diff), reduction='none')
+        mask = torch.ones_like(lap_gtr) > 0
+    loss = F.mse_loss(diff, torch.zeros_like(diff), reduction='none')
     if use_weights:
         loss = loss * weights
     loss = loss[mask].mean()
