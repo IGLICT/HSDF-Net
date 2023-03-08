@@ -63,6 +63,8 @@ but replacing `configs/example.txt` in the commands with the desired configurati
     Download pretrained models from [this link](https://mailsucaseducn-my.sharepoint.com/:u:/g/personal/yangjie161_mails_ucas_edu_cn/Ee6jnWgGLrpOru32pOSOHQoBRTHBfSnnB5KoPkrgtuBW3Q?e=u6LqZd).
     Run 'python generate.py --config ./configs/example.txt'
 
+If you prefer Pytorch version, please switch to [this](https://github.com/IGLICT/HSDF-Net/tree/pytorch).
+
 ## Citation
 
 If you find our work useful in your research, please consider citing:
